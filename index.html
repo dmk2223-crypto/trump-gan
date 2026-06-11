@@ -159,7 +159,7 @@ async function load() {
   }, 150);
 
   try {
-    const response = await fetch("generator.onnx");
+    const response = await fetch("https://github.com/dmk2223-crypto/trump-gan/releases/download/v1.0/generator.onnx");
     const buffer   = await response.arrayBuffer();
 
     clearInterval(barTimer);
