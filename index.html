@@ -65,6 +65,52 @@
     line-height: 2;
   }
 
+  .buttons {
+    margin-top: 16px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .btn {
+    font-family: Georgia, serif;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: #9a8a7a;
+    background: transparent;
+    border: 1px solid #c8bfb0;
+    padding: 10px 20px;
+    cursor: pointer;
+    text-transform: lowercase;
+    min-width: 80px;
+    transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .btn:hover, .btn:active {
+    background: #d8d0c0;
+    color: #5a4a3a;
+  }
+
+  .btn.active {
+    background: #c8bfb0;
+    color: #5a4a3a;
+  }
+
+  .yt-link {
+    margin-top: 20px;
+    font-size: 10px;
+    color: #b8a898;
+    letter-spacing: 0.1em;
+    text-decoration: none;
+    text-align: center;
+    display: block;
+  }
+
+  .yt-link:hover {
+    color: #7a6a5a;
+  }
+
   /* loading bar sits below crack */
   .loading-bar {
     position: absolute;
@@ -121,6 +167,15 @@
   space to generate &nbsp;·&nbsp; m to morph
 </div>
 
+<div class="buttons" id="buttons" style="display:none">
+  <button class="btn" id="generateBtn" onclick="generate()">generate</button>
+  <button class="btn" id="morphBtn" onclick="toggleMorph()">morph</button>
+</div>
+
+<a class="yt-link" href="https://www.youtube.com/@theinformationsyndicate" target="_blank" id="ytLink" style="display:none">
+  the information syndicate
+</a>
+
 <script>
 ort.env.wasm.numThreads = 1;
 
@@ -176,6 +231,8 @@ async function load() {
       placeholder.classList.add("hidden");
       status.textContent = "";
       instructions.style.display = "block";
+      document.getElementById("buttons").style.display = "flex";
+      document.getElementById("ytLink").style.display = "block";
       generate();
     }, 400);
 
@@ -241,6 +298,7 @@ function generate() {
 function startMorph() {
   if (!session || morphing) return;
   morphing = true;
+  document.getElementById("morphBtn").classList.add("active");
   latentA = latentA || randLatent();
   latentB = randLatent();
   morphT = 0;
@@ -257,6 +315,7 @@ function startMorph() {
 function stopMorph() {
   morphing = false;
   clearTimeout(morphHandle);
+  document.getElementById("morphBtn").classList.remove("active");
 }
 
 function toggleMorph() {
