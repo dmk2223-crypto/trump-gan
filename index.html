@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trump GAN</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: #e8e0d0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: Georgia, serif;
+  }
+
+  .crack {
+    position: relative;
+    width: 160px;
+    height: 160px;
+  }
+
+  .crack::before {
+    content: '';
+    position: absolute;
+    top: -14px; left: 50%;
+    transform: translateX(-50%);
+    width: 1px;
+    height: 14px;
+    background: #2a1a0a;
+  }
+
+  .crack::after {
+    content: '';
+    position: absolute;
+    bottom: -14px; left: 50%;
+    transform: translateX(-50%);
+    width: 1px;
+    height: 14px;
+    background: #2a1a0a;
+  }
+
+  canvas {
+    display: block;
+    width: 160px;
+    height: 160px;
+    image-rendering: auto;
+    cursor: pointer;
+    box-shadow:
+      -10px 0 20px rgba(0,0,0,0.3),
+       10px 0 20px rgba(0,0,0,0.3),
+       0 0 0 1px #2a1a0a;
+  }
+
+  .instructions {
+    margin-top: 28px;
+    font-size: 11px;
+    color: #9a8a7a;
+    letter-spacing: 0.1em;
+    text-align: center;
+    line-height: 2;
+  }
+
+  /* loading bar sits below crack */
+  .loading-bar {
+    position: absolute;
+    bottom: -20px;
+    left: 0;
+    width: 100%;
+    height: 1px;
+    background: rgba(42,26,10,0.15);
+  }
+
+  .loading-fill {
+    height: 100%;
+    background: #2a1a0a;
+    width: 0%;
+    transition: width 0.2s ease;
+  }
+
+  .status {
+    position: absolute;
+    bottom: -36px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: #9a8a7a;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+
+  /* placeholder shown before model loads */
+  .placeholder {
+    position: absolute;
+    inset: 0;
+    background: #d8d0c0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #2a1a0a;
+  }
+
+  .placeholder.hidden { display: none; }
+
+</style>
+</head>
+<body>
+
+<div class="crack">
+  <canvas id="c" width="128" height="128"></canvas>
+  <div class="placeholder" id="placeholder"></div>
+  <div class="loading-bar"><div class="loading-fill" id="fill"></div></div>
+  <div class="status" id="status">loading model</div>
+</div>
+
+<div class="instructions" id="instructions" style="display:none">
+  space to generate &nbsp;·&nbsp; m to morph
+</div>
+
+<script>
+ort.env.wasm.numThreads = 1;
+
+const canvas = document.getElementById("c");
+const ctx    = canvas.getContext("2d");
+const fill   = document.getElementById("fill");
+const status = document.getElementById("status");
+const placeholder = document.getElementById("placeholder");
+const instructions = document.getElementById("instructions");
+
+let session = null;
+let morphing = false;
+let morphHandle = null;
+let latentA = null, latentB = null, morphT = 0;
+const STEPS = 90, DELAY = 35;
+
+const loadingMessages = [
+  "loading model",
+  "unpacking weights",
+  "preparing latent space",
+  "almost ready",
+];
+
+async function load() {
+  let msgIdx = 0;
+  fill.style.width = "5%";
+
+  const msgTimer = setInterval(() => {
+    msgIdx = Math.min(msgIdx + 1, loadingMessages.length - 1);
+    status.textContent = loadingMessages[msgIdx];
+  }, 1800);
+
+  let pct = 5;
+  const barTimer = setInterval(() => {
+    if (pct < 80) { pct += (80 - pct) * 0.04; fill.style.width = pct + "%"; }
+  }, 150);
+
+  try {
+    const response = await fetch("generator.onnx");
+    const buffer   = await response.arrayBuffer();
+
+    clearInterval(barTimer);
+    fill.style.width = "90%";
+    status.textContent = "ready";
+
+    session = await ort.InferenceSession.create(buffer, { executionProviders: ["wasm"] });
+
+    clearInterval(msgTimer);
+    fill.style.width = "100%";
+
+    setTimeout(() => {
+      fill.style.width = "0%";
+      placeholder.classList.add("hidden");
+      status.textContent = "";
+      instructions.style.display = "block";
+      generate();
+    }, 400);
+
+  } catch(e) {
+    clearInterval(barTimer);
+    clearInterval(msgTimer);
+    status.textContent = "error loading model";
+    console.error(e);
+  }
+}
+
+function randLatent() {
+  const v = new Float32Array(128);
+  for (let i = 0; i < 128; i += 2) {
+    const u1 = Math.random() || 1e-10, u2 = Math.random();
+    const m = Math.sqrt(-2 * Math.log(u1));
+    v[i] = m * Math.cos(2 * Math.PI * u2);
+    v[i+1] = m * Math.sin(2 * Math.PI * u2);
+  }
+  return v;
+}
+
+function lerp(a, b, t) {
+  const v = new Float32Array(128);
+  for (let i = 0; i < 128; i++) v[i] = a[i]*(1-t) + b[i]*t;
+  return v;
+}
+
+async function render(latent) {
+  const t   = new ort.Tensor("float32", latent, [1, 128, 1, 1]);
+  const out = (await session.run({ latent: t })).image.data;
+  const W = 128, H = 128, N = W * H;
+  const px = ctx.createImageData(W, H);
+
+  // Global min/max normalization across all channels — matches training preview
+  let mn = Infinity, mx = -Infinity;
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] < mn) mn = out[i];
+    if (out[i] > mx) mx = out[i];
+  }
+  const range = mx - mn || 1;
+
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const pi  = y * W + x;
+      const idx = pi * 4;
+      px.data[idx]     = Math.round(((out[pi]         - mn) / range) * 255);
+      px.data[idx + 1] = Math.round(((out[N + pi]     - mn) / range) * 255);
+      px.data[idx + 2] = Math.round(((out[2 * N + pi] - mn) / range) * 255);
+      px.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(px, 0, 0);
+}
+
+function generate() {
+  if (!session) return;
+  stopMorph();
+  latentA = randLatent();
+  render(latentA);
+}
+
+function startMorph() {
+  if (!session || morphing) return;
+  morphing = true;
+  latentA = latentA || randLatent();
+  latentB = randLatent();
+  morphT = 0;
+  async function step() {
+    if (!morphing) return;
+    await render(lerp(latentA, latentB, morphT / STEPS));
+    morphT++;
+    if (morphT > STEPS) { latentA = latentB; latentB = randLatent(); morphT = 0; }
+    morphHandle = setTimeout(step, DELAY);
+  }
+  step();
+}
+
+function stopMorph() {
+  morphing = false;
+  clearTimeout(morphHandle);
+}
+
+function toggleMorph() {
+  if (morphing) stopMorph();
+  else startMorph();
+}
+
+canvas.addEventListener("click", generate);
+
+document.addEventListener("keydown", e => {
+  if (e.code === "Space") { e.preventDefault(); generate(); }
+  if (e.code === "KeyM")  { toggleMorph(); }
+});
+
+load();
+</script>
+</body>
+</html>
